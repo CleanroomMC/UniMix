@@ -114,7 +114,7 @@ final class MixinConfig implements Comparable<MixinConfig>, IMixinConfig {
     static class OverwriteOptions {
         
         @SerializedName("conformVisibility")
-        boolean conformAccessModifiers;
+        boolean conformAccessModifiers = true;
         
         @SerializedName("requireAnnotations")
         boolean requireOverwriteAnnotations;
