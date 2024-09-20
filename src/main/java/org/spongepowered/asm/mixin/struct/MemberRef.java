@@ -266,7 +266,7 @@ public abstract class MemberRef {
         }
 
         public void setHandle(int tag, String owner, String name, String desc) {
-            setHandle(tag, owner, name, desc, tag == Opcodes.H_INVOKEINTERFACE);
+            this.handle = new org.objectweb.asm.Handle(tag, owner, name, desc);
         }
 
     }
