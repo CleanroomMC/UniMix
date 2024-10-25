@@ -41,7 +41,10 @@ import org.spongepowered.asm.mixin.injection.struct.InjectionPointData;
  * <p>Example:</p>
  * <blockquote><pre>
  *   &#064;At("HEAD")</pre>
- * </blockquote> 
+ * </blockquote>
+ * 
+ * <p>Note that for constructors, use of <tt>HEAD</tt> is discouraged, see
+ * instead <tt>{@link ConstructorHead CTOR_HEAD}</tt>. 
  */
 @AtCode("HEAD")
 public class MethodHead extends InjectionPoint {
@@ -60,4 +63,5 @@ public class MethodHead extends InjectionPoint {
         nodes.add(insns.getFirst());
         return true;
     }
+
 }

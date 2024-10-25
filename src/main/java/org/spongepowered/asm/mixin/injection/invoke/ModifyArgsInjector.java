@@ -33,6 +33,7 @@ import org.objectweb.asm.tree.VarInsnNode;
 import org.spongepowered.asm.mixin.injection.InjectionPoint.RestrictTargetLevel;
 import org.spongepowered.asm.mixin.injection.ModifyArgs;
 import org.spongepowered.asm.mixin.injection.invoke.arg.ArgsClassGenerator;
+import org.spongepowered.asm.mixin.injection.struct.ArgOffsets;
 import org.spongepowered.asm.mixin.injection.struct.InjectionInfo;
 import org.spongepowered.asm.mixin.injection.struct.InjectionNodes.InjectionNode;
 import org.spongepowered.asm.mixin.injection.struct.Target;
@@ -77,21 +78,27 @@ public class ModifyArgsInjector extends InvokeInjector {
      */
     @Override
     protected void injectAtInvoke(Target target, InjectionNode node) {
-        MethodInsnNode targetMethod = (MethodInsnNode)node.getCurrentTarget();
+        MethodInsnNode methodNode = (MethodInsnNode)node.getCurrentTarget();
+        Type[] args = Type.getArgumentTypes(methodNode.desc);
+        ArgOffsets offsets = node.<ArgOffsets>getDecoration(ArgOffsets.KEY, ArgOffsets.DEFAULT);
+        Type[] originalArgs = offsets.apply(args);
+        int endIndex = offsets.getArgIndex(originalArgs.length);
         
-        Type[] args = Type.getArgumentTypes(targetMethod.desc);
-        if (args.length == 0) {
+        String targetMethodDesc = Type.getMethodDescriptor(Type.getReturnType(methodNode.desc), originalArgs);
+        
+        if (originalArgs.length == 0) {
             throw new InvalidInjectionException(this.info, "@ModifyArgs injector " + this + " targets a method invocation "
-                    + targetMethod.name + targetMethod.desc + " with no arguments!");
+                    + ((MethodInsnNode)node.getOriginalTarget()).name + targetMethodDesc + " with no arguments!");
         }
         
-        String clArgs = this.argsClassGenerator.getArgsClass(targetMethod.desc, this.info.getMixin().getMixin()).getName();
+        String clArgs = this.argsClassGenerator.getArgsClass(targetMethodDesc, this.info.getMixin().getMixin()).getName();
         boolean withArgs = this.verifyTarget(target);
 
         InsnList insns = new InsnList();
         Extension extraStack = target.extendStack().add(1);
         
-        this.packArgs(insns, clArgs, targetMethod);
+        int[] afterWindowArgMap = this.storeArgs(target, args, insns, endIndex);
+        this.packArgs(insns, clArgs, targetMethodDesc);
         
         if (withArgs) {
             extraStack.add(target.arguments);
@@ -99,16 +106,17 @@ public class ModifyArgsInjector extends InvokeInjector {
         }
         
         this.invokeHandler(insns);
-        this.unpackArgs(insns, clArgs, args);
-        
+        this.unpackArgs(insns, clArgs, originalArgs);
+        this.pushArgs(args, insns, afterWindowArgMap, endIndex, args.length);
+
         extraStack.apply();
-        target.insns.insertBefore(targetMethod, insns);
+        target.insns.insertBefore(methodNode, insns);
     }
 
     private boolean verifyTarget(Target target) {
         String shortDesc = String.format("(L%s;)V", ArgsClassGenerator.ARGS_REF);
         if (!this.methodNode.desc.equals(shortDesc)) {
-            String targetDesc = Bytecode.changeDescriptorReturnType(target.method.desc, "V");
+            String targetDesc = Bytecode.changeDescriptorReturnType(target.getDesc(), "V");
             String longDesc = String.format("(L%s;%s", ArgsClassGenerator.ARGS_REF, targetDesc.substring(1));
             
             if (this.methodNode.desc.equals(longDesc)) {
@@ -121,8 +129,8 @@ public class ModifyArgsInjector extends InvokeInjector {
         return false;
     }
 
-    private void packArgs(InsnList insns, String clArgs, MethodInsnNode targetMethod) {
-        String factoryDesc = Bytecode.changeDescriptorReturnType(targetMethod.desc, "L" + clArgs + ";");
+    private void packArgs(InsnList insns, String clArgs, String targetMethodDesc) {
+        String factoryDesc = Bytecode.changeDescriptorReturnType(targetMethodDesc, "L" + clArgs + ";");
         insns.add(new MethodInsnNode(Opcodes.INVOKESTATIC, clArgs, "of", factoryDesc, false));
         insns.add(new InsnNode(Opcodes.DUP));
         

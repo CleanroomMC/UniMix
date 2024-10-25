@@ -29,6 +29,9 @@ import java.util.Collection;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
 
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
@@ -111,7 +114,8 @@ public class TargetValidator extends MixinValidator {
     }
 
     private boolean validateSuperClass(TypeHandle targetType, TypeHandle superClass) {
-        return targetType.isImaginary() || targetType.isSimulated() || superClass.isSuperTypeOf(targetType) || this.checkMixinsFor(targetType, superClass);
+        return targetType.isImaginary() || targetType.isSimulated() || superClass.isSuperTypeOf(targetType)
+                || this.checkMixinsFor(targetType, superClass);
     }
 
     private boolean checkMixinsFor(TypeHandle targetType, TypeHandle superMixin) {

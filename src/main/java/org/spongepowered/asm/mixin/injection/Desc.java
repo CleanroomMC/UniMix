@@ -115,7 +115,7 @@ public @interface Desc {
      * The next elements of this descriptor path, evaluated in order for each
      * recurse point.
      */
-    // public Next[] next() default { };
+    public Next[] next() default { };
     
     /**
      * The minimum number of times this selector should match. By default the

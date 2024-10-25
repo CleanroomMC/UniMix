@@ -147,7 +147,7 @@ public class BeforeConstant extends InjectionPoint {
     private final boolean log;
 
     public BeforeConstant(IMixinContext context, AnnotationNode node, String returnType) {
-        super(Annotations.<String>getValue(node, "slice", ""), Selector.DEFAULT, null);
+        super(Annotations.<String>getValue(node, "slice", ""), Specifier.DEFAULT, null);
         
         Boolean empty = Annotations.<Boolean>getValue(node, "nullValue", (Boolean)null);
         this.ordinal = Annotations.<Integer>getValue(node, "ordinal", Integer.valueOf(-1));
@@ -169,7 +169,7 @@ public class BeforeConstant extends InjectionPoint {
     public BeforeConstant(InjectionPointData data) {
         super(data);
         
-        String strNullValue = data.get("nullValue", null);
+        String strNullValue = data.get("nullValue", (String)null);
         Boolean empty = strNullValue != null ? Boolean.parseBoolean(strNullValue) : null;
         
         this.ordinal = data.getOrdinal();
@@ -178,8 +178,8 @@ public class BeforeConstant extends InjectionPoint {
         this.floatValue = Floats.tryParse(data.get("floatValue", ""));
         this.longValue = Longs.tryParse(data.get("longValue", ""));
         this.doubleValue = Doubles.tryParse(data.get("doubleValue", ""));
-        this.stringValue = data.get("stringValue", null);
-        String strClassValue = data.get("classValue", null);
+        this.stringValue = data.get("stringValue", (String)null);
+        String strClassValue = data.get("classValue", (String)null);
         this.typeValue = strClassValue != null ? Type.getObjectType(strClassValue.replace('.', '/')) : null;
         
         this.matchByType = this.validateDiscriminator(data.getMixin(), "V", empty, "in @At(\"CONSTANT\") args");

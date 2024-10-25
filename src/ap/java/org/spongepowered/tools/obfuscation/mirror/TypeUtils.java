@@ -275,12 +275,9 @@ public abstract class TypeUtils {
      * @return java signature
      */
     public static String getJavaSignature(String descriptor) {
-        /* Fabric: Work around https://github.com/SpongePowered/Mixin/issues/560 */
         if (!descriptor.contains("(")) {
             return SignaturePrinter.getTypeName(org.objectweb.asm.Type.getType(descriptor), false, true);
         }
-        /* End fabric */
-
         return new SignaturePrinter("", descriptor).setFullyQualified(true).toDescriptor();
     }
 

@@ -612,7 +612,16 @@ public class MixinServiceLaunchWrapper extends MixinServiceAbstract implements I
      */
     @Override
     public ClassNode getClassNode(String className, boolean runTransformers) throws ClassNotFoundException, IOException {
-        return this.getClassNode(className, this.getClassBytes(className, true), ClassReader.EXPAND_FRAMES);
+        return this.getClassNode(className, this.getClassBytes(className, runTransformers), ClassReader.EXPAND_FRAMES);
+    }
+    
+    /* (non-Javadoc)
+     * @see org.spongepowered.asm.service.IClassBytecodeProvider#getClassNode(
+     *      java.lang.String, boolean, int)
+     */
+    @Override
+    public ClassNode getClassNode(String className, boolean runTransformers, int flags) throws ClassNotFoundException, IOException {
+        return this.getClassNode(className, this.getClassBytes(className, runTransformers), flags);
     }
 
     /**
@@ -648,7 +657,7 @@ public class MixinServiceLaunchWrapper extends MixinServiceAbstract implements I
 
     /** Initialize lazily so we don't reference LaunchWrapper's class loader before it has initialized. */
     private LaunchClassLoaderUtil getClassLoaderUtil() {
-        if(this.classLoaderUtil == null) {
+        if (this.classLoaderUtil == null) {
             this.classLoaderUtil = new LaunchClassLoaderUtil(Launch.classLoader);
         }
         return this.classLoaderUtil;

@@ -21,13 +21,12 @@ apply plugin: 'maven-publish'
 apply plugin: 'eclipse'
 apply plugin: 'idea'
 apply plugin: 'com.github.johnrengelman.shadow'
-apply plugin: 'potemkin-modules'
 
 // Default tasks
 defaultTasks 'licenseFormat', 'check', 'build'
 
 // Basic project information
-group = 'io.github.legacymoddingmc'
+group = 'com.cleanroommc'
 archivesBaseName = 'sponge-mixin'
 version = buildVersion + "+mixin." + upstreamMixinVersion
 
@@ -50,10 +49,6 @@ ext.legacyForgeAsmVersion = project.hasProperty("legacyForgeAsmVersion") ? asmVe
 sourceCompatibility = '1.8'
 targetCompatibility = '1.8'
 
-java {
-    modularity.inferModulePath = false
-}
-
 // Project repositories
 repositories {
     mavenCentral()
@@ -65,11 +60,6 @@ repositories {
         name = 'Fabric'
         url = 'https://maven.fabricmc.net/'
     }
-    maven {
-        // For modlauncher
-        name = 'forge'
-        url = 'https://files.minecraftforge.net/maven'
-    }
 }
 
 configurations {
@@ -79,15 +69,10 @@ configurations {
     fernflowerImplementation    .extendsFrom implementation
     launchwrapperImplementation .extendsFrom implementation
     agentImplementation         .extendsFrom implementation
-    modlauncherImplementation   .extendsFrom implementation
-    modlauncher9Implementation  .extendsFrom modlauncherImplementation
-    modularityImplementation    .extendsFrom modlauncher9Implementation
-    modularityCompileOnly       .extendsFrom compileOnly
 
     proguard {
         extendsFrom fernflowerImplementation
         extendsFrom launchwrapperImplementation
-        extendsFrom modlauncherImplementation
         extendsFrom compileClasspath
     }
 }
@@ -95,12 +80,12 @@ configurations {
 sourceSets {
     legacy {
         ext.languageVersion = 8
-        ext.compatibility = '1.6'
+        ext.compatibility = '1.8'
     }
     main {
         compileClasspath += legacy.output
         ext.languageVersion = 8
-        ext.compatibility = '1.6'
+        ext.compatibility = '1.8'
     }
     ap {
         compileClasspath += main.output
@@ -111,61 +96,27 @@ sourceSets {
         compileClasspath += main.output
         ext.languageVersion = 8
         ext.compatibility = '1.6'
-        ext.modularityExcluded = true
     }
     agent {
         compileClasspath += main.output
         ext.languageVersion = 8
-        ext.compatibility = '1.6'
+        ext.compatibility = '1.8'
     }
     bridge {
         compileClasspath += main.output
         ext.languageVersion = 8
         ext.compatibility = '1.8'
-        ext.modularityExcluded = true
     }
     example {
         compileClasspath += main.output
         compileClasspath += ap.output
-        ext.modularityExcluded = true
     }
-    test {
-        ext.modularityExcluded = true
-    }
+    test
     launchwrapper {
         compileClasspath += main.output
         ext.languageVersion = 8
         ext.compatibility = '1.8'
     }
-    modlauncher {
-        compileClasspath += main.output
-        ext.languageVersion = 8
-        ext.compatibility = '1.8'
-    }
-    modlauncher4 {
-        compileClasspath += main.output
-        compileClasspath += modlauncher.output
-        ext.languageVersion = 8
-        ext.compatibility = '1.8'
-    }
-    modlauncher9 {
-        ext.languageVersion = 16
-        compileClasspath += main.output
-        compileClasspath += modlauncher.output
-    }
-    modularity {
-        ext.languageVersion = 16
-        ext.modularityExcluded = true // don't add ourselves
-    }
-}
-
-// Because Mixin aims to support a variety of environments, we have to be able to run with older versions of GSON and Guava that lack official module
-// names. This means the same library may appear with multiple module names. We want to be able to link our module with either of these two at
-// runtime, without having to have two versions of the library on our compile-time module path. To do this, we generate empty "potemkin" jars with
-// *only* a module descriptor for the module we want to be able to compile against.
-potemkinModules {
-    module 'com.google.gson'
-    module 'com.google.common'
 }
 
 // Project dependencies
@@ -200,36 +151,11 @@ dependencies {
         exclude module: 'jopt-simple'
     }
     
-    modlauncherImplementation 'net.sf.jopt-simple:jopt-simple:5.0.4'
-    modlauncherCompileOnly 'org.apache.logging.log4j:log4j-core:2.0-beta9'
-    modlauncherImplementation ("cpw.mods:modlauncher:$legacyModlauncherVersion") {
-        exclude module: 'asm'
-        exclude module: 'asm-analysis'
-        exclude module: 'asm-commons'
-        exclude module: 'asm-tree'
-        exclude module: 'jopt-simple'
-    }
-    
-    modlauncher4Implementation ("cpw.mods:modlauncher:$legacyModlauncherVersion") {
-        exclude module: 'asm'
-        exclude module: 'asm-analysis'
-        exclude module: 'asm-commons'
-        exclude module: 'asm-tree'
-        exclude module: 'jopt-simple'
-    }
-    
-    modlauncher9Implementation ("cpw.mods:modlauncher:$modlauncherVersion") {
-        exclude module: 'jopt-simple'
-    }
-    modlauncher9Implementation 'cpw.mods:securejarhandler:0.9.+'
-    
     // asm bridge
     bridgeImplementation 'org.apache.logging.log4j:log4j-core:2.0-beta9'
     bridgeImplementation "org.ow2.asm:asm-commons:$legacyForgeAsmVersion"
     
     legacyImplementation "org.ow2.asm:asm-tree:$asmVersion"
-    
-    modularityCompileOnly 'org.apache.logging.log4j:log4j-core:2.11.2'
 }
 
 javadoc {
@@ -257,9 +183,6 @@ eclipse {
     classpath {
         containers 'org.eclipse.buildship.core.gradleclasspathcontainer'
         file.whenMerged {
-            // Can't include old modlauncher because it causes issues with modules
-            entries.removeAll { it.kind == 'lib' && it.path =~ ~/modlauncher-$legacyModlauncherVersion/ }
-            entries.removeAll { it.kind == 'src' && it.path =~ ~/modlauncher4/ }
             entries.removeAll { it.kind == 'lib' && it.path =~ ~/log4j.*beta9/ }
             
             // Mark everything else as a module
@@ -281,7 +204,7 @@ eclipse {
     }
 
     // Build service task outputs for test projects
-    autoBuildTasks compileModlauncher4Java, compileModlauncher9Java, compileLaunchwrapperJava
+    autoBuildTasks compileLaunchwrapperJava
 }
 
 // Filter, process, and include resources
@@ -325,8 +248,6 @@ tasks.withType(JavaCompile) {
     options.encoding = 'utf8'
 }
 
-def modularityInputs = objects.fileCollection()
-
 project.sourceSets.each { set -> {
     if (set.ext.has("languageVersion")) {
         project.tasks[set.compileJavaTaskName].javaCompiler = javaToolchains.compilerFor {
@@ -337,24 +258,7 @@ project.sourceSets.each { set -> {
         project.tasks[set.compileJavaTaskName].sourceCompatibility = set.ext.compatibility
         project.tasks[set.compileJavaTaskName].targetCompatibility = set.ext.compatibility
     }
-    def modularityExcluded = set.ext.has("modularityExcluded") && set.ext.modularityExcluded
-    if (!modularityExcluded) {
-        project.sourceSets.modularity {
-            compileClasspath += set.output
-        }
-        modularityInputs.from set.output
-    }
 }}
-
-compileModularityJava {
-    inputs.files(modularityInputs)
-    doFirst {
-        options.compilerArgs = [
-            '--module-path', classpath.asPath,
-            '--patch-module', "org.spongepowered.mixin=${modularityInputs.collect { it.absolutePath }.join(File.pathSeparator)}"
-        ]
-    }
-}
 
 if (JavaVersion.current().isJava8Compatible()) {
     tasks.withType(Javadoc) {
@@ -425,7 +329,7 @@ task timestamp(type: Jar, dependsOn: build) {
 }
 
 task sourceJar(type: Jar) {
-    sourceSets.findAll { it.name != 'modularity' }.each {
+    sourceSets.each {
         from it.java
         from it.resources
     }

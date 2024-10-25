@@ -34,15 +34,16 @@ import java.util.Locale;
 import java.util.Map;
 
 import org.spongepowered.asm.launch.platform.container.ContainerHandleURI;
-import org.spongepowered.asm.logging.ILogger;
 import org.spongepowered.asm.launch.platform.container.IContainerHandle;
+import org.spongepowered.asm.logging.ILogger;
 import org.spongepowered.asm.mixin.MixinEnvironment;
 import org.spongepowered.asm.mixin.MixinEnvironment.CompatibilityLevel;
 import org.spongepowered.asm.mixin.MixinEnvironment.Phase;
+import org.spongepowered.asm.mixin.Mixins;
+import org.spongepowered.asm.mixin.extensibility.IMixinConfigSource;
+import org.spongepowered.asm.mixin.throwables.MixinError;
 import org.spongepowered.asm.service.MixinService;
 import org.spongepowered.asm.service.ServiceVersionError;
-import org.spongepowered.asm.mixin.Mixins;
-import org.spongepowered.asm.mixin.throwables.MixinError;
 
 //import com.google.common.collect.ImmutableList;
 
@@ -173,7 +174,7 @@ public class MixinPlatformManager {
         }
         
         for (String config : args.getConfigs()) {
-            this.addConfig(config);
+            this.addConfig(config, null);
         }
     }
 
@@ -263,10 +264,10 @@ public class MixinPlatformManager {
      * 
      * @param config config resource name, does not require a leading /
      */
-    final void addConfig(String config) {
+    final void addConfig(String config, IMixinConfigSource source) {
         if (config.endsWith(".json")) {
-            MixinPlatformManager.logger.debug("Registering mixin config: {}", config);
-            Mixins.addConfiguration(config);
+            MixinPlatformManager.logger.debug("Registering mixin config: {} source={}", config, source);
+            Mixins.addConfiguration(config, source);
         } else if (config.contains(".json@")) {
             throw new MixinError("Setting config phase via manifest is no longer supported: " + config + ". Specify target in config instead");
         }

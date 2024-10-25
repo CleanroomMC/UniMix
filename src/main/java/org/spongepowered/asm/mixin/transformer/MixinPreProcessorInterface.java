@@ -24,15 +24,14 @@
  */
 package org.spongepowered.asm.mixin.transformer;
 
-import java.lang.reflect.Modifier;
-
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.spongepowered.asm.mixin.MixinEnvironment;
-import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.MixinEnvironment.CompatibilityLevel;
 import org.spongepowered.asm.mixin.Mutable;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.struct.InjectionInfo;
 import org.spongepowered.asm.mixin.transformer.ClassInfo.Method;
 import org.spongepowered.asm.mixin.transformer.MixinInfo.MixinClassNode;
 import org.spongepowered.asm.mixin.transformer.MixinInfo.MixinMethodNode;
@@ -42,6 +41,8 @@ import org.spongepowered.asm.util.Annotations;
 import org.spongepowered.asm.util.Bytecode;
 import org.spongepowered.asm.util.Constants;
 import org.spongepowered.asm.util.LanguageFeatures;
+
+import java.lang.reflect.Modifier;
 
 /**
  * Bytecode preprocessor for interface mixins, simply performs some additional
@@ -66,25 +67,55 @@ class MixinPreProcessorInterface extends MixinPreProcessorStandard {
      */
     @Override
     protected void prepareMethod(MixinMethodNode mixinMethod, Method method) {
-        // Userland interfaces should not have non-public methods except for lambda bodies
-        if (!Bytecode.hasFlag(mixinMethod, Opcodes.ACC_PUBLIC)) {
-            if (Bytecode.hasFlag(mixinMethod, Opcodes.ACC_SYNTHETIC)) {
-                CompatibilityLevel requiredLevel = CompatibilityLevel.requiredFor(LanguageFeatures.PRIVATE_SYNTHETIC_METHODS_IN_INTERFACES);
-                if (MixinEnvironment.getCompatibilityLevel().isLessThan(requiredLevel)) {
+        boolean isPublic = Bytecode.hasFlag(mixinMethod, Opcodes.ACC_PUBLIC);
+        MixinEnvironment.Feature injectorsInInterfaceMixins = MixinEnvironment.Feature.INJECTORS_IN_INTERFACE_MIXINS;
+        CompatibilityLevel currentLevel = MixinEnvironment.getCompatibilityLevel();
+        CompatibilityLevel requiredLevelSynthetic = CompatibilityLevel.requiredFor(LanguageFeatures.PRIVATE_SYNTHETIC_METHODS_IN_INTERFACES);
+
+        if (!isPublic && mixinMethod.isSynthetic()) {
+            if (mixinMethod.isSynthetic()) {
+                if (currentLevel.isLessThan(requiredLevelSynthetic)) {
                     throw new InvalidInterfaceMixinException(this.mixin, String.format(
                             "Interface mixin contains a synthetic private method but compatibility level %s is required! Found %s in %s",
-                            requiredLevel, method, this.mixin));
+                            requiredLevelSynthetic, method, this.mixin));
                 }
-            } else if (Constants.CLINIT.equals(mixinMethod.name) && "()V".equals(mixinMethod.desc)) {
-                return; //In order to shadow fields they must have a value set, this may result in a static initialiser being included
-            } else if (!Bytecode.hasFlag(mixinMethod, Opcodes.ACC_PRIVATE) || !MixinEnvironment.getCompatibilityLevel().supports(LanguageFeatures.PRIVATE_METHODS_IN_INTERFACES)) {
-                //On versions that support it private methods are also allowed
-                throw new InvalidInterfaceMixinException(this.mixin, "Interface mixin contains a non-public method! Found " + method + " in "
-                        + this.mixin);
+                // Private synthetic is ok, do not process further
+                return;
             }
         }
         
-        super.prepareMethod(mixinMethod, method);
+        if (!isPublic) {
+            if (Constants.CLINIT.equals(mixinMethod.name) && "()V".equals(mixinMethod.desc)) {
+                return; //In order to shadow fields they must have a value set, this may result in a static initialiser being included
+            }
+            CompatibilityLevel requiredLevelPrivate = CompatibilityLevel.requiredFor(LanguageFeatures.PRIVATE_METHODS_IN_INTERFACES);
+            if (currentLevel.isLessThan(requiredLevelPrivate)) {
+                throw new InvalidInterfaceMixinException(this.mixin, String.format(
+                        "Interface mixin contains a private method but compatibility level %s is required! Found %s in %s",
+                        requiredLevelPrivate, method, this.mixin));
+            }
+        }
+
+        AnnotationNode injectorAnnotation = InjectionInfo.getInjectorAnnotation(this.mixin, mixinMethod);
+        if (injectorAnnotation == null) {
+            super.prepareMethod(mixinMethod, method);
+            return;
+        }
+
+        if (injectorsInInterfaceMixins.isAvailable() && !injectorsInInterfaceMixins.isEnabled()) {
+            throw new InvalidInterfaceMixinException(this.mixin, String.format(
+                    "Interface mixin contains an injector but Feature.INJECTORS_IN_INTERFACE_MIXINS is disabled! Found %s in %s",
+                    method, this.mixin));
+        }
+
+        CompatibilityLevel classLevel = CompatibilityLevel.forClassVersion(mixin.getClassVersion());
+        // Make injectors private synthetic if the current class version supports it
+        if (isPublic
+                && !classLevel.supports(LanguageFeatures.PRIVATE_METHODS_IN_INTERFACES)
+                && classLevel.supports(LanguageFeatures.PRIVATE_SYNTHETIC_METHODS_IN_INTERFACES)) {
+            Bytecode.setVisibility(mixinMethod, Bytecode.Visibility.PRIVATE);
+            mixinMethod.access |= Opcodes.ACC_SYNTHETIC;
+        }
     }
     
     /* (non-Javadoc)
@@ -101,7 +132,7 @@ class MixinPreProcessorInterface extends MixinPreProcessorStandard {
             throw new InvalidInterfaceMixinException(this.mixin, String.format("Interface mixin contains an illegal field! Found %s %s in %s",
                     Modifier.toString(field.access), field.name, this.mixin));
         }
-        
+
         //Whilst we could support adding constants, they'd always be public so there's little benefit to allowing it
         if (shadow == null) {
             throw new InvalidInterfaceMixinException(this.mixin, String.format("Interface mixin %s contains a non-shadow field: %s",
@@ -110,7 +141,7 @@ class MixinPreProcessorInterface extends MixinPreProcessorStandard {
 
         //Making a field non-final will result in verification crashes, so @Mutable is always a mistake
         if (Annotations.getVisible(field, Mutable.class) != null) {
-        	throw new InvalidInterfaceMixinException(this.mixin, String.format("@Shadow field %s.%s is marked as mutable. This is not allowed.",
+            throw new InvalidInterfaceMixinException(this.mixin, String.format("@Shadow field %s.%s is marked as mutable. This is not allowed.",
                     this.mixin, field.name));
         }
 

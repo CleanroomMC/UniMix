@@ -29,20 +29,20 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.spongepowered.asm.launch.platform.GlobalMixinContextQuery;
+import com.google.common.primitives.Chars;
 import org.spongepowered.asm.logging.ILogger;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.spongepowered.asm.mixin.MixinEnvironment;
+import org.spongepowered.asm.mixin.ModUtil;
 import org.spongepowered.asm.mixin.injection.struct.InjectionInfo;
 import org.spongepowered.asm.mixin.transformer.ClassInfo.Method;
 import org.spongepowered.asm.mixin.transformer.MixinInfo.MixinMethodNode;
 import org.spongepowered.asm.service.MixinService;
 import org.spongepowered.asm.util.Counter;
-import org.spongepowered.asm.util.asm.MethodNodeEx;
 
 import com.google.common.base.Strings;
-import com.google.common.primitives.Chars;
+import org.spongepowered.asm.util.asm.MethodNodeEx;
 
 /**
  * Maintains method remaps for a target class
@@ -76,7 +76,15 @@ class MethodMapper {
     public ClassInfo getClassInfo() {
         return this.info;
     }
-    
+
+    /**
+     * Resets the counters to prepare for application, which can happen multiple times due to hotswap.
+     */
+    public void reset() {
+        this.nextUniqueMethodIndex = 0;
+        this.nextUniqueFieldIndex = 0;
+    }
+
     /**
      * Conforms an injector handler method
      * 
@@ -98,7 +106,7 @@ class MethodMapper {
             return;
         }
         
-        String handlerName = this.getHandlerName((MixinMethodNode)handler);
+        String handlerName = this.getHandlerName(mixin, (MixinMethodNode)handler);
         handler.name = method.conform(handlerName);
     }
     
@@ -108,21 +116,20 @@ class MethodMapper {
      * @param method mixin method
      * @return conformed handler name
      */
-    public String getHandlerName(MixinMethodNode method) {
+    public String getHandlerName(MixinInfo mixin, MixinMethodNode method) {
         String prefix = InjectionInfo.getInjectorPrefix(method.getInjectorAnnotation());
         String classUID = MethodMapper.getClassUID(method.getOwner().getClassRef());
-        String owner = GlobalMixinContextQuery.owner(method.getOwner().getConfig(), "");
+        String mod = MethodMapper.getMixinSourceId(mixin, "");
         String methodName = method.name;
-        if (!owner.isEmpty()) {
-	    	//It's common for mods to prefix their own handlers, let's account for that happening
-	    	if (methodName.startsWith(owner) && methodName.length() > owner.length() + 1 &&
-                    Chars.contains(new char[] {'_', '$'}, methodName.charAt(owner.length()))) {
-	    		methodName = methodName.substring(owner.length() + 1);
-	    	}
-            owner += '$';
+        if (!mod.isEmpty()) {
+            //It's common for mods to prefix their own handlers, let's account for that happening
+            if (methodName.startsWith(mod) && methodName.length() > mod.length() + 1 && Chars.contains(new char[] {'_', '$'}, methodName.charAt(mod.length()))) {
+                methodName = methodName.substring(mod.length() + 1);
+            }
+            mod += '$';
         }
         String methodUID = MethodMapper.getMethodUID(methodName, method.desc, !method.isSurrogate());
-        return String.format("%s$%s%s$%s%s", prefix, classUID, methodUID, owner, methodName);
+        return String.format("%s$%s%s$%s%s", prefix, classUID, methodUID, mod, methodName);
     }
 
     /**
@@ -134,22 +141,22 @@ class MethodMapper {
      *      method name prefix
      * @return Unique method name
      */
-    public String getUniqueName(MethodNode method, String sessionId, boolean preservePrefix) {
+    public String getUniqueName(MixinInfo mixin, MethodNode method, String sessionId, boolean preservePrefix) {
         String uniqueIndex = Integer.toHexString(this.nextUniqueMethodIndex++);
         String methodName = method.name;
         if (method instanceof MethodNodeEx) {
-        	String mod = GlobalMixinContextQuery.owner(((MethodNodeEx) method).getOwner().getConfig(), "");
-        	if (!mod.isEmpty()) {
-	        	//It's rarer for mods to prefix their @Unique methods, but let's account for it anyway
-	        	if (methodName.startsWith(mod) && methodName.length() > mod.length() + 1 && Chars.contains(new char[] {'_', '$'}, methodName.charAt(mod.length()))) {
-	        		methodName = methodName.substring(mod.length() + 1);
-	        	}
-	        	if (preservePrefix) {
-	        		methodName += '$' + mod;
-	        	} else {
-	        		methodName = mod + '$' + methodName;
-	        	}
-        	}
+            String mod = MethodMapper.getMixinSourceId(mixin, "");
+            if (!mod.isEmpty()) {
+                //It's rarer for mods to prefix their @Unique methods, but let's account for it anyway
+                if (methodName.startsWith(mod) && methodName.length() > mod.length() + 1 && Chars.contains(new char[] {'_', '$'}, methodName.charAt(mod.length()))) {
+                    methodName = methodName.substring(mod.length() + 1);
+                }
+                if (preservePrefix) {
+                    methodName += '$' + mod;
+                } else {
+                    methodName = mod + '$' + methodName;
+                }
+            }
         }
         String pattern = preservePrefix ? "%2$s_$md$%1$s$%3$s" : "md%s$%s$%s";
         return String.format(pattern, sessionId.substring(30), methodName, uniqueIndex);
@@ -162,9 +169,30 @@ class MethodMapper {
      * @param sessionId Session ID, for uniqueness
      * @return Unique field name
      */
-    public String getUniqueName(FieldNode field, String sessionId) {
+    public String getUniqueName(MixinInfo mixin, FieldNode field, String sessionId) {
         String uniqueIndex = Integer.toHexString(this.nextUniqueFieldIndex++);
-        return String.format("fd%s$%s$%s", sessionId.substring(30), field.name, uniqueIndex);
+        return String.format("fd%s$%s%s$%s", sessionId.substring(30), MethodMapper.getMixinSourceId(mixin, "$"), field.name, uniqueIndex);
+    }
+
+    /**
+     * Get clean sourceId from mixin
+     *
+     * @param mixin mixin info
+     * @return clean source id with dollar suffix or empty string
+     */
+    private static String getMixinSourceId(MixinInfo mixin, String separator) {
+        String sourceId = mixin.getConfig().getCleanSourceId();
+        if (sourceId == null) {
+            String modId = ModUtil.owner(mixin.getConfig(), null);
+            if (modId == null) {
+                return "";
+            }
+            return modId + separator;
+        }
+        if (sourceId.length() > 12) {
+            sourceId = sourceId.substring(0, 12);
+        }
+        return String.format("%s%s", sourceId, separator);
     }
 
     /**

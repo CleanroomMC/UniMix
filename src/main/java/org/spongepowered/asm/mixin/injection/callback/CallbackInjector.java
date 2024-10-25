@@ -38,6 +38,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.InjectionPoint;
 import org.spongepowered.asm.mixin.injection.Surrogate;
 import org.spongepowered.asm.mixin.injection.code.Injector;
+import org.spongepowered.asm.mixin.injection.code.InjectorTarget;
+import org.spongepowered.asm.mixin.injection.struct.Constructor;
 import org.spongepowered.asm.mixin.injection.struct.InjectionInfo;
 import org.spongepowered.asm.mixin.injection.struct.InjectionNodes.InjectionNode;
 import org.spongepowered.asm.mixin.injection.struct.Target;
@@ -184,7 +186,7 @@ public class CallbackInjector extends Injector {
             List<String> argNames = null;
             
             if (locals != null) {
-                int baseArgIndex = CallbackInjector.this.isStatic() ? 0 : 1;
+                int baseArgIndex = target.isStatic ? 0 : 1;
                 argNames = new ArrayList<String>();
                 for (int l = 0; l <= locals.length; l++) {
                     if (l == this.frameSize) {
@@ -212,10 +214,7 @@ public class CallbackInjector extends Injector {
             this.invoke = target.extendStack();
             this.ctor = target.extendStack();
 
-            this.invoke.add(target.arguments.length);
-            if (this.canCaptureLocals) {
-                this.invoke.add(this.localTypes.length - this.frameSize);
-            }
+            this.invoke.add().add(handlerArgs);
 
             //If the handler doesn't captureArgs, the CallbackInfo(Returnable) will be the first LVT slot, otherwise it will be at the target's frameSize
             int callbackInfoSlot = handlerArgs.length == 1 ? Bytecode.isStatic(handler) ? 0 : 1 : frameSize;
@@ -422,7 +421,7 @@ public class CallbackInjector extends Injector {
     @Override
     protected void sanityCheck(Target target, List<InjectionPoint> injectionPoints) {
         super.sanityCheck(target, injectionPoints);
-        this.checkTargetModifiers(target, true);
+        this.checkTargetModifiers(target, false);
     }
     
     /* (non-Javadoc)
@@ -431,27 +430,21 @@ public class CallbackInjector extends Injector {
      *      org.objectweb.asm.tree.AbstractInsnNode, java.util.Set)
      */
     @Override
-    protected void addTargetNode(Target target, List<InjectionNode> myNodes, AbstractInsnNode node, Set<InjectionPoint> nominators) {
-        InjectionNode injectionNode = target.addInjectionNode(node);
+    protected void addTargetNode(InjectorTarget injectorTarget, List<InjectionNode> myNodes, AbstractInsnNode node, Set<InjectionPoint> nominators) {
+        InjectionNode injectionNode = injectorTarget.addInjectionNode(node);
         
+        if (this.cancellable && injectorTarget.getTarget() instanceof Constructor) {
+            throw new InvalidInjectionException(this.info, String.format("Found cancellable @Inject targetting a constructor in injector %s", this));
+        }
+
         for (InjectionPoint ip : nominators) {
             
             try {
-                this.checkTargetForNode(target, injectionNode, ip.getTargetRestriction(this.info));
+                this.checkTargetForNode(injectorTarget.getTarget(), injectionNode, ip.getTargetRestriction(this.info));
             } catch (InvalidInjectionException ex) {
                 throw new InvalidInjectionException(this.info, String.format("%s selector %s", ip, ex.getMessage()));
             }
             
-            // Fabric start: prevent cancellation in constructor injections
-            if (this.cancellable) {
-                try {
-                    this.checkTargetForNode(target, injectionNode, ip.getCancellationRestriction(this.info));
-                } catch (InvalidInjectionException ex) {
-                    throw new InvalidInjectionException(this.info, String.format("%s selector (cancellable = true) %s", ip, ex.getMessage()));
-                }
-            }
-            // Fabric end
-
             String id = ip.getId();
             if (Strings.isNullOrEmpty(id)) {
                 continue;
@@ -460,7 +453,7 @@ public class CallbackInjector extends Injector {
             String existingId = this.ids.get(Integer.valueOf(injectionNode.getId()));
             if (existingId != null && !existingId.equals(id)) {
                 Injector.logger.warn("Conflicting id for {} insn in {}, found id {} on {}, previously defined as {}", Bytecode.getOpcodeName(node),
-                        target.toString(), id, this.info, existingId);
+                        injectorTarget.toString(), id, this.info, existingId);
                 break;
             }
             
@@ -576,7 +569,9 @@ public class CallbackInjector extends Injector {
             }
         }
         this.invokeCallback(callback, callbackMethod);
-        if (callback.usesCallbackInfo) this.injectCancellationCode(callback);
+        if (callback.usesCallbackInfo) {
+            this.injectCancellationCode(callback);
+        }
         
         callback.inject();
         this.info.notifyInjected(callback.target);
@@ -639,8 +634,8 @@ public class CallbackInjector extends Injector {
         printer.kv("Target Max LOCALS", callback.target.getMaxLocals());
         printer.kv("Initial Frame Size", callback.frameSize);
         printer.kv("Callback Name", this.info.getMethodName());
-        printer.kv("Instruction", "%s %s", callback.node.getClass().getSimpleName(),
-                Bytecode.getOpcodeName(callback.node.getCurrentTarget().getOpcode()));
+        printer.kv("Instruction", "%s %s", callback.node.getCurrentTarget().getClass().getSimpleName(),
+                Bytecode.describeNode(callback.node.getCurrentTarget()));
         printer.hr();
         if (callback.locals.length > callback.frameSize) {
             printer.add("  %s  %20s  %s", "LOCAL", "TYPE", "NAME");
@@ -765,7 +760,7 @@ public class CallbackInjector extends Injector {
 
         // Push the target method's parameters onto the stack
         if (callback.captureArgs()) {
-            Bytecode.loadArgs(callback.target.arguments, callback, this.isStatic ? 0 : 1, -1); //, callback.typeCasts);
+            Bytecode.loadArgs(callback.target.arguments, callback, callback.target.isStatic ? 0 : 1, -1); //, callback.typeCasts);
         }
         
         // Push the callback info onto the stack

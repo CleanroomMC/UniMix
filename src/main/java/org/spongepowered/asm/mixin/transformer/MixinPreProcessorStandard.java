@@ -649,15 +649,20 @@ class MixinPreProcessorStandard {
                 iter.remove();
                 continue;
             } else if (!Bytecode.compareFlags(mixinField, target, Opcodes.ACC_STATIC)) {
-            	if (isShadow) {
-	                throw new InvalidMixinException(this.mixin, String.format("STATIC modifier of @Shadow field %s in %s does not match the target",
-	                        mixinField.name, this.mixin));
-            	} else {
-            		throw new InvalidMixinException(this.mixin, String.format("Field %s in %s conflicts with %sstatic field in the target (%s)",
-            				mixinField.name, mixin, Bytecode.isStatic(target) ? "" : "non-", context.getTarget()));
-            	}
+                if (isShadow) {
+                    throw new InvalidMixinException(this.mixin, String.format("STATIC modifier of @Shadow field %s in %s does not match the target",
+                            mixinField.name, this.mixin));
+                } else {
+                    throw new InvalidMixinException(this.mixin, String.format("Field %s in %s conflicts with %sstatic field in the target (%s)",
+                            mixinField.name, mixin, Bytecode.isStatic(target) ? "" : "non-", context.getTarget()));
+                }
             }
             
+            if (!Bytecode.compareFlags(mixinField, target, Opcodes.ACC_STATIC)) {
+                throw new InvalidMixinException(this.mixin, String.format("STATIC modifier of @Shadow field %s in %s does not match the target",
+                        mixinField.name, this.mixin));
+            }
+
             // Check that the shadow field has a matching descriptor
             if (!target.desc.equals(mixinField.desc)) {
                 throw new InvalidMixinException(this.mixin, String.format("The field %s in the target class has a conflicting signature",

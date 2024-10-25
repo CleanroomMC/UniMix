@@ -328,6 +328,7 @@ public final class Locals {
      *      bear in mind that if the specified node is itself a STORE opcode,
      *      then we will be looking at the state of the locals PRIOR to its
      *      invocation
+     * @param fabricCompatibility Fabric compatibility level
      * @return A sparse array containing a view (hopefully) of the locals at the
      *      specified location
      */
@@ -538,8 +539,9 @@ public final class Locals {
                 VarInsnNode varInsn = (VarInsnNode)insn;
                 boolean isLoad = insn.getOpcode() >= Opcodes.ILOAD && insn.getOpcode() <= Opcodes.SALOAD;
                 if (isLoad) {
-                    frame[varInsn.var] = Locals.getLocalVariableAt(classNode, method, insn, varInsn.var);
-                    int varSize = frame[varInsn.var].desc != null ? Type.getType(frame[varInsn.var].desc).getSize() : 1;
+                    LocalVariableNode toLoad = Locals.getLocalVariableAt(classNode, method, insn, varInsn.var);
+                    frame[varInsn.var] = toLoad;
+                    int varSize = toLoad != null && toLoad.desc != null ? Type.getType(frame[varInsn.var].desc).getSize() : 1;
                     knownFrameSize = Math.max(knownFrameSize, varInsn.var + varSize);
                     if (settings.hasFlags(Settings.RESURRECT_EXPOSED_ON_LOAD)) {
                         Locals.resurrect(frame, knownFrameSize, settings);
@@ -575,7 +577,7 @@ public final class Locals {
         return frame;
     }
     
-    private static LocalVariableNode[] getLocalsAt_0_9_2(ClassNode classNode, MethodNode method, AbstractInsnNode node) {
+    private static LocalVariableNode[] getLocalsAt092(ClassNode classNode, MethodNode method, AbstractInsnNode node) {
         for (int i = 0; i < 3 && (node instanceof LabelNode || node instanceof LineNumberNode); i++) {
             node = Locals.nextNode(method.instructions, node);
         }

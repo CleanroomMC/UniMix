@@ -27,7 +27,6 @@ package org.spongepowered.asm.mixin.transformer;
 import java.text.DecimalFormat;
 import java.util.*;
 
-import org.spongepowered.asm.launch.platform.GlobalMixinContextQuery;
 import org.spongepowered.asm.logging.Level;
 import org.spongepowered.asm.logging.ILogger;
 import org.objectweb.asm.tree.AnnotationNode;
@@ -37,6 +36,7 @@ import org.spongepowered.asm.mixin.MixinEnvironment;
 import org.spongepowered.asm.mixin.MixinEnvironment.Option;
 import org.spongepowered.asm.mixin.MixinEnvironment.Phase;
 import org.spongepowered.asm.mixin.Mixins;
+import org.spongepowered.asm.mixin.ModUtil;
 import org.spongepowered.asm.mixin.extensibility.*;
 import org.spongepowered.asm.mixin.extensibility.IMixinErrorHandler.ErrorAction;
 import org.spongepowered.asm.mixin.injection.InjectionPoint;
@@ -128,7 +128,7 @@ public class MixinProcessor implements IMixinProcessor {
         protected abstract String getContext(IMixinInfo mixin, String context);
 
         public String getLogMessage(String context, InvalidMixinException ex, IMixinInfo mixin) {
-            return String.format("Mixin %s for mod %s failed %s: %s %s", this.text, GlobalMixinContextQuery.owner(mixin.getConfig()),
+            return String.format("Mixin %s for mod %s failed %s: %s %s", this.text, ModUtil.owner(mixin.getConfig()),
                     this.getContext(mixin, context), ex.getClass().getName(), ex.getMessage());
         }
 
@@ -557,8 +557,7 @@ public class MixinProcessor implements IMixinProcessor {
                 this.handleMixinPrepareError(config, ex, environment);
             } catch (Exception ex) {
                 String message = ex.getMessage();
-                MixinProcessor.logger.error("Error encountered whilst initialising mixin config '" + config.getName() +
-                        "' from mod '" + GlobalMixinContextQuery.owner(config) + "': " + message, ex);
+                MixinProcessor.logger.error("Error encountered whilst initialising mixin config '" + config.getName() + "' from owner '" + org.spongepowered.asm.mixin.ModUtil.owner(config) + "': " + message, ex);
             }
         }
         
@@ -585,8 +584,7 @@ public class MixinProcessor implements IMixinProcessor {
                 this.handleMixinPrepareError(config, ex, environment);
             } catch (Exception ex) {
                 String message = ex.getMessage();
-                MixinProcessor.logger.error("Error encountered during mixin config postInit step '" + config.getName() +
-                        "' from mod '" + GlobalMixinContextQuery.owner(config) + "': " + message, ex);
+                MixinProcessor.logger.error("Error encountered during mixin config postInit step '" + config.getName() + "' from owner '" + org.spongepowered.asm.mixin.ModUtil.owner(config) + "': " + message, ex);
             }
         }
         
@@ -640,7 +638,7 @@ public class MixinProcessor implements IMixinProcessor {
                 .kv("Action", errorPhase.name())
                 .kv("Mixin", mixin.getClassName())
                 .kv("Config", config.getName())
-                .kv("Owner", GlobalMixinContextQuery.owner(config))
+                .kv("Owner", ModUtil.owner(config))
                 // .kv("ModId", org.spongepowered.asm.mixin.FabricUtil.getModId(config))
                 .kv("Phase", phase)
                 .hr('-')

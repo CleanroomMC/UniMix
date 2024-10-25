@@ -49,11 +49,13 @@ import org.spongepowered.asm.mixin.injection.ModifyArgs;
 import org.spongepowered.asm.mixin.injection.ModifyConstant;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.struct.Constructor;
 import org.spongepowered.asm.mixin.throwables.MixinError;
 import org.spongepowered.asm.mixin.transformer.ClassInfo.Field;
 import org.spongepowered.asm.mixin.transformer.ext.extensions.ExtensionClassExporter;
 import org.spongepowered.asm.mixin.transformer.meta.MixinMerged;
 import org.spongepowered.asm.mixin.transformer.meta.MixinRenamed;
+import org.spongepowered.asm.mixin.transformer.struct.Initialiser;
 import org.spongepowered.asm.mixin.transformer.throwables.InvalidMixinException;
 import org.spongepowered.asm.mixin.transformer.throwables.MixinApplicatorException;
 import org.spongepowered.asm.service.IMixinAuditTrail;
@@ -70,6 +72,7 @@ import org.spongepowered.asm.util.throwables.ConstraintViolationException;
 import org.spongepowered.asm.util.throwables.InvalidConstraintException;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 
 /**
  * Applies mixins to a target class
@@ -102,123 +105,29 @@ class MixinApplicatorStandard {
         /**
          * Enumerate injectors and scan for injection points 
          */
-        PREINJECT,
+        INJECT_PREPARE,
+        
+        /**
+         * Apply accessors and invokers 
+         */
+        ACCESSOR,
+        
+        /**
+         * Apply preinjection steps on injectors from previous pass 
+         */
+        INJECT_PREINJECT,
         
         /**
          * Apply injectors from previous pass 
          */
-        INJECT
+        INJECT_APPLY
 
     }
     
     /**
-     * Strategy for injecting initialiser insns
+     * Order collection to use for all passes except ApplicatorPass.INJECT
      */
-    enum InitialiserInjectionMode {
-
-        /**
-         * Default mode, attempts to place initialisers after all other
-         * competing initialisers in the target ctor
-         */
-        DEFAULT,
-        
-        /**
-         * Safe mode, only injects initialiser directly after the super-ctor
-         * invocation 
-         */
-        SAFE
-
-    }
-    
-    /**
-     * Internal struct for representing a range
-     */
-    class Range {
-
-        /**
-         * Start of the range
-         */
-        final int start;
-        
-        /**
-         * End of the range 
-         */
-        final int end;
-        
-        /**
-         * Range marker
-         */
-        final int marker;
-
-        /**
-         * Create a range with the specified values.
-         * 
-         * @param start Start of the range
-         * @param end End of the range
-         * @param marker Arbitrary marker value
-         */
-        Range(int start, int end, int marker) {
-            this.start = start;
-            this.end = end;
-            this.marker = marker;
-        }
-        
-        /**
-         * Range is valid if both start and end are nonzero and end is after or
-         * at start
-         * 
-         * @return true if valid
-         */
-        boolean isValid() {
-            return (this.start != 0 && this.end != 0 && this.end >= this.start);
-        }
-        
-        /**
-         * Returns true if the supplied value is between or equal to start and
-         * end
-         * 
-         * @param value true if the range contains value
-         */
-        boolean contains(int value) {
-            return value >= this.start && value <= this.end;
-        }
-        
-        /**
-         * Returns true if the supplied value is outside the range
-         * 
-         * @param value true if the range does not contain value
-         */
-        boolean excludes(int value) {
-            return value < this.start || value > this.end;
-        }
-        
-        /* (non-Javadoc)
-         * @see java.lang.Object#toString()
-         */
-        @Override
-        public String toString() {
-            return String.format("Range[%d-%d,%d,valid=%s)", this.start, this.end, this.marker, this.isValid());
-        }
-
-    }
-    
-    /**
-     * List of opcodes which must not appear in a class initialiser, mainly a
-     * sanity check so that if any of the specified opcodes are found, we can
-     * log it as an error condition and then people can bitch at me to fix it.
-     * Essentially if it turns out that field initialisers can somehow make use
-     * of local variables, then I need to write some code to ensure that said
-     * locals are shifted so that they don't interfere with locals in the
-     * receiving constructor. 
-     */
-    protected static final int[] INITIALISER_OPCODE_BLACKLIST = {
-        Opcodes.RETURN, Opcodes.ILOAD, Opcodes.LLOAD, Opcodes.FLOAD, Opcodes.DLOAD,
-        Opcodes.ISTORE, Opcodes.LSTORE, Opcodes.FSTORE, Opcodes.DSTORE, Opcodes.ASTORE,
-        // Fabric: Array opcodes cause no problems in initialisers and should not be needlessly restricted.
-        //        Opcodes.IALOAD, Opcodes.LALOAD, Opcodes.FALOAD, Opcodes.DALOAD, Opcodes.AALOAD,
-        //        Opcodes.BALOAD, Opcodes.CALOAD, Opcodes.SALOAD, Opcodes.IASTORE, Opcodes.LASTORE,
-        //        Opcodes.FASTORE, Opcodes.DASTORE, Opcodes.AASTORE, Opcodes.BASTORE, Opcodes.CASTORE, Opcodes.SASTORE
-    };
+    protected static final Set<Integer> ORDERS_NONE = ImmutableSet.<Integer>of(Integer.valueOf(0)); 
 
     /**
      * Log more things
@@ -320,17 +229,28 @@ class MixinApplicatorStandard {
                 activity.next("%s Applicator Phase", pass);
                 Section timer = this.profiler.begin("pass", pass.name().toLowerCase(Locale.ROOT));
                 IActivity applyActivity = this.activities.begin("Mixin");
-                for (Iterator<MixinTargetContext> iter = mixinContexts.iterator(); iter.hasNext();) {
-                    current = iter.next();
-                    applyActivity.next(current.toString());
-                    try {
-                        this.applyMixin(current, pass);
-                    } catch (InvalidMixinException ex) {
-                        if (current.isRequired()) {
-                            throw ex;
+                
+                Set<Integer> orders = MixinApplicatorStandard.ORDERS_NONE;
+                if (pass == ApplicatorPass.INJECT_APPLY) {
+                    orders = new TreeSet<Integer>();
+                    for (MixinTargetContext context : mixinContexts) {
+                        context.getInjectorOrders(orders);
+                    }
+                }
+            
+                for (Integer injectorOrder : orders) {
+                    for (Iterator<MixinTargetContext> iter = mixinContexts.iterator(); iter.hasNext();) {
+                        current = iter.next();
+                        applyActivity.next(current.toString());
+                        try {
+                            this.applyMixin(current, pass, injectorOrder.intValue());
+                        } catch (InvalidMixinException ex) {
+                            if (current.isRequired()) {
+                                throw ex;
+                            }
+                            this.context.addSuppressed(ex);
+                            iter.remove(); // Do not process this mixin further
                         }
-                        this.context.addSuppressed(ex);
-                        iter.remove(); // Do not process this mixin further
                     }
                 }
                 applyActivity.end();
@@ -370,7 +290,7 @@ class MixinApplicatorStandard {
      * 
      * @param mixin Mixin to apply
      */
-    protected final void applyMixin(MixinTargetContext mixin, ApplicatorPass pass) {
+    protected final void applyMixin(MixinTargetContext mixin, ApplicatorPass pass, int injectorOrder) {
         IActivity activity = this.activities.begin("Apply");
         switch (pass) {
             case MAIN:
@@ -390,16 +310,24 @@ class MixinApplicatorStandard {
                 this.applyInitialisers(mixin);
                 break;
                 
-            case PREINJECT:
+            case INJECT_PREPARE:
                 activity.next("Prepare Injections");
                 this.prepareInjections(mixin);
                 break;
                 
-            case INJECT:
+            case ACCESSOR:
                 activity.next("Apply Accessors");
                 this.applyAccessors(mixin);
+                break;
+                
+            case INJECT_PREINJECT:
                 activity.next("Apply Injections");
-                this.applyInjections(mixin);
+                this.applyPreInjections(mixin);
+                break;
+                
+            case INJECT_APPLY:
+                activity.next("Apply Injections");
+                this.applyInjections(mixin, injectorOrder);
                 break;
                 
             default:
@@ -490,7 +418,7 @@ class MixinApplicatorStandard {
                 // This is just a local field, so add it
                 this.targetClass.fields.add(field);
                 mixin.fieldMerged(field);
-                
+
                 if (field.signature != null) {
                     if (this.mergeSignatures) {
                         SignatureVisitor sv = mixin.getSignature().getRemapper();
@@ -776,272 +704,22 @@ class MixinApplicatorStandard {
      * @param mixin mixin target context
      */
     protected void applyInitialisers(MixinTargetContext mixin) {
-        // Try to find a suitable constructor, we need a constructor with line numbers in order to extract the initialiser 
-        MethodNode ctor = this.getConstructor(mixin);
-        if (ctor == null) {
-            return;
-        }
-        
-        // Find the initialiser instructions in the candidate ctor
-        Deque<AbstractInsnNode> initialiser = this.getInitialiser(mixin, ctor);
+        // Find the initialiser in the candidate ctor
+        Initialiser initialiser = mixin.getInitialiser();
         if (initialiser == null || initialiser.size() == 0) {
             return;
         }
-        
-        String superName = this.context.getClassInfo().getSuperName();
-        
+
         // Patch the initialiser into the target class ctors
-        for (MethodNode method : this.targetClass.methods) {
-            if (Constants.CTOR.equals(method.name)) {
-                DelegateInitialiser superCall = Bytecode.findDelegateInit(method, superName, this.targetClass.name);
-                if (!superCall.isPresent || superCall.isSuper) {
-                    method.maxStack = Math.max(method.maxStack, ctor.maxStack);
-                    this.injectInitialiser(mixin, method, initialiser);
+        for (Constructor ctor : this.context.getConstructors()) {
+            if (ctor.isInjectable()) {
+                int extraStack = initialiser.getMaxStack() - ctor.getMaxStack();
+                if (extraStack > 0) {
+                    ctor.extendStack().add(extraStack);
                 }
+                initialiser.injectInto(ctor);
             }
         }
-    }
-    
-    /**
-     * Finds a suitable ctor for reading the instance initialiser bytecode
-     * 
-     * @param mixin mixin to search
-     * @return appropriate ctor or null if none found
-     */
-    protected MethodNode getConstructor(MixinTargetContext mixin) {
-        MethodNode ctor = null;
-        
-        for (MethodNode mixinMethod : mixin.getMethods()) {
-            if (Constants.CTOR.equals(mixinMethod.name) && Bytecode.methodHasLineNumbers(mixinMethod)) {
-                if (ctor == null) {
-                    ctor = mixinMethod;
-                } else {
-                    // Not an error condition, just weird
-                    this.logger.warn("Mixin {} has multiple constructors, {} was selected\n", mixin, ctor.desc);
-                }
-            }
-        }
-        
-        return ctor;
-    }
-
-    /**
-     * Identifies line numbers in the supplied ctor which correspond to the
-     * start and end of the method body.
-     * 
-     * @param ctor constructor to scan
-     * @return range indicating the line numbers of the specified constructor
-     *      and the position of the superclass ctor invocation
-     */
-    private Range getConstructorRange(MethodNode ctor) {
-        boolean lineNumberIsValid = false;
-        AbstractInsnNode endReturn = null;
-        
-        int line = 0, start = 0, end = 0, superIndex = -1;
-        for (Iterator<AbstractInsnNode> iter = ctor.instructions.iterator(); iter.hasNext();) {
-            AbstractInsnNode insn = iter.next();
-            if (insn instanceof LineNumberNode) {
-                line = ((LineNumberNode)insn).line;
-                lineNumberIsValid = true;
-            } else if (insn instanceof MethodInsnNode) {
-                if (insn.getOpcode() == Opcodes.INVOKESPECIAL && Constants.CTOR.equals(((MethodInsnNode)insn).name) && superIndex == -1) {
-                    superIndex = ctor.instructions.indexOf(insn);
-                    start = line;
-                }
-            } else if (insn.getOpcode() == Opcodes.PUTFIELD) {
-                lineNumberIsValid = false;
-            } else if (insn.getOpcode() == Opcodes.RETURN) {
-                if (lineNumberIsValid) {
-                    end = line;
-                } else {
-                    end = start;
-                    endReturn = insn;
-                }
-            }
-        }
-        
-        if (endReturn != null) {
-            LabelNode label = new LabelNode(new Label());
-            ctor.instructions.insertBefore(endReturn, label);
-            ctor.instructions.insertBefore(endReturn, new LineNumberNode(start, label));
-        }
-        
-        return new Range(start, end, superIndex);
-    }
-
-    /**
-     * Get insns corresponding to the instance initialiser (hopefully) from the
-     * supplied constructor.
-     * 
-     * @param mixin mixin target context
-     * @param ctor constructor to inspect
-     * @return initialiser bytecode extracted from the supplied constructor, or
-     *      null if the constructor range could not be parsed
-     */
-    protected final Deque<AbstractInsnNode> getInitialiser(MixinTargetContext mixin, MethodNode ctor) {
-        //
-        // TODO Potentially rewrite this to be less horrible.
-        //
-        
-        // Find the range of line numbers which corresponds to the constructor body
-        Range init = this.getConstructorRange(ctor);
-        if (!init.isValid()) {
-            return null;
-        }
-        
-        // Now we know where the constructor is, look for insns which lie OUTSIDE the method body
-        int line = 0;
-        Deque<AbstractInsnNode> initialiser = new ArrayDeque<AbstractInsnNode>();
-        boolean gatherNodes = false;
-        int trimAtOpcode = -1;
-        LabelNode optionalInsn = null;
-        for (Iterator<AbstractInsnNode> iter = ctor.instructions.iterator(init.marker); iter.hasNext();) {
-            AbstractInsnNode insn = iter.next();
-            if (insn instanceof LineNumberNode) {
-                line = ((LineNumberNode)insn).line;
-                AbstractInsnNode next = ctor.instructions.get(ctor.instructions.indexOf(insn) + 1);
-                if (line == init.end && next.getOpcode() != Opcodes.RETURN) {
-                    gatherNodes = true;
-                    trimAtOpcode = Opcodes.RETURN;
-                } else {
-                    gatherNodes = init.excludes(line);
-                    trimAtOpcode = -1;
-                }
-            } else if (gatherNodes) {
-                if (optionalInsn != null) {
-                    initialiser.add(optionalInsn);
-                    optionalInsn = null;
-                }
-                
-                if (insn instanceof LabelNode) {
-                    optionalInsn = (LabelNode)insn;
-                } else {
-                    int opcode = insn.getOpcode();
-                    if (opcode == trimAtOpcode) {
-                        trimAtOpcode = -1;
-                        continue;
-                    }
-                    for (int ivalidOp : MixinApplicatorStandard.INITIALISER_OPCODE_BLACKLIST) {
-                        if (opcode == ivalidOp) {
-                            // At the moment I don't handle any transient locals because I haven't seen any in the wild, but let's avoid writing
-                            // code which will likely break things and fix it if a real test case ever appears
-                            throw new InvalidMixinException(mixin, "Cannot handle " + Bytecode.getOpcodeName(opcode) + " opcode (0x"
-                                    + Integer.toHexString(opcode).toUpperCase(Locale.ROOT) + ") in class initialiser");
-                        }
-                    }
-                    
-                    initialiser.add(insn);
-                }
-            }
-        }
-        
-        // Check that the last insn is a PUTFIELD, if it's not then 
-        AbstractInsnNode last = initialiser.peekLast();
-        if (last != null) {
-            if (last.getOpcode() != Opcodes.PUTFIELD) {
-                throw new InvalidMixinException(mixin, "Could not parse initialiser, expected 0xB5, found 0x"
-                        + Integer.toHexString(last.getOpcode()) + " in " + mixin);
-            }
-        }
-        
-        return initialiser;
-    }
-
-    /**
-     * Inject initialiser code into the target constructor
-     * 
-     * @param mixin mixin target context
-     * @param ctor target constructor
-     * @param initialiser initialiser instructions
-     */
-    protected final void injectInitialiser(MixinTargetContext mixin, MethodNode ctor, Deque<AbstractInsnNode> initialiser) {
-        Map<LabelNode, LabelNode> labels = Bytecode.cloneLabels(ctor.instructions);
-        // Fabric: also clone labels from the initialiser as they will be merged.
-        for (AbstractInsnNode node : initialiser) {
-            if (node instanceof LabelNode) {
-                labels.put((LabelNode) node, new LabelNode());
-            }
-        }
-        
-        AbstractInsnNode insn = this.findInitialiserInjectionPoint(mixin, ctor, initialiser);
-        if (insn == null) {
-            this.logger.warn("Failed to locate initialiser injection point in <init>{}, initialiser was not mixed in.", ctor.desc);
-            return;
-        }
-
-        for (AbstractInsnNode node : initialiser) {
-            if (node instanceof LabelNode) {
-                // Fabric: Merge cloned labels instead of skipping them.
-                // continue;
-            }
-            if (node instanceof JumpInsnNode) {
-                // Fabric: Jumps cause no issues if labels are cloned properly and should not be needlessly restricted.
-                // throw new InvalidMixinException(mixin, "Unsupported JUMP opcode in initialiser in " + mixin);
-            }
-            AbstractInsnNode imACloneNow = node.clone(labels);
-            ctor.instructions.insert(insn, imACloneNow);
-            insn = imACloneNow;
-        }
-    }
-
-    /**
-     * Find the injection point for injected initialiser insns in the target
-     * ctor
-     * 
-     * @param mixin target context for mixin being applied
-     * @param ctor target ctor
-     * @param initialiser source initialiser insns
-     * @return target node
-     */
-    protected AbstractInsnNode findInitialiserInjectionPoint(MixinTargetContext mixin, MethodNode ctor, Deque<AbstractInsnNode> initialiser) {
-        Set<String> initialisedFields = new HashSet<String>();
-        for (AbstractInsnNode initialiserInsn : initialiser) {
-            if (initialiserInsn.getOpcode() == Opcodes.PUTFIELD) {
-                initialisedFields.add(MixinApplicatorStandard.fieldKey((FieldInsnNode)initialiserInsn)); 
-            }
-        }
-
-        InitialiserInjectionMode mode = this.getInitialiserInjectionMode(mixin.getEnvironment());
-        String targetName = this.targetClassInfo.getName(); 
-        String targetSuperName = this.targetClassInfo.getSuperName();
-        AbstractInsnNode targetInsn = null;
-
-        for (Iterator<AbstractInsnNode> iter = ctor.instructions.iterator(); iter.hasNext();) {
-            AbstractInsnNode insn = iter.next();
-            if (insn.getOpcode() == Opcodes.INVOKESPECIAL && Constants.CTOR.equals(((MethodInsnNode)insn).name)) {
-                String owner = ((MethodInsnNode)insn).owner;
-                if (owner.equals(targetName) || owner.equals(targetSuperName)) {
-                    targetInsn = insn;
-                    if (mode == InitialiserInjectionMode.SAFE) {
-                        break;
-                    }
-                }
-            } else if (insn.getOpcode() == Opcodes.PUTFIELD && mode == InitialiserInjectionMode.DEFAULT) {
-                String key = MixinApplicatorStandard.fieldKey((FieldInsnNode)insn);
-                if (initialisedFields.contains(key)) {
-                    targetInsn = insn;
-                }
-            }            
-        }
-        
-        return targetInsn;
-    }
-
-    private InitialiserInjectionMode getInitialiserInjectionMode(MixinEnvironment environment) {
-        String strMode = environment.getOptionValue(Option.INITIALISER_INJECTION_MODE);
-        if (strMode == null) {
-            return InitialiserInjectionMode.DEFAULT;
-        }
-        try {
-            return InitialiserInjectionMode.valueOf(strMode.toUpperCase(Locale.ROOT));
-        } catch (Exception ex) {
-            this.logger.warn("Could not parse unexpected value \"{}\" for mixin.initialiserInjectionMode, reverting to DEFAULT", strMode);
-            return InitialiserInjectionMode.DEFAULT;
-        }
-    }
-
-    private static String fieldKey(FieldInsnNode fieldNode) {
-        return String.format("%s:%s", fieldNode.desc, fieldNode.name);
     }
 
     /**
@@ -1054,12 +732,24 @@ class MixinApplicatorStandard {
     }
     
     /**
+     * Run preinject application on all injectors discovered in the previous
+     * pass
+     * 
+     * @param mixin Mixin being applied
+     * @param injectorOrder injector order for this pass
+     */
+    protected void applyPreInjections(MixinTargetContext mixin) {
+        mixin.applyPreInjections();
+    }
+
+    /**
      * Apply all injectors discovered in the previous pass
      * 
      * @param mixin Mixin being applied
+     * @param injectorOrder injector order for this pass
      */
-    protected void applyInjections(MixinTargetContext mixin) {
-        mixin.applyInjections();
+    protected void applyInjections(MixinTargetContext mixin, int injectorOrder) {
+        mixin.applyInjections(injectorOrder);
     }
     
     /**
@@ -1138,7 +828,7 @@ class MixinApplicatorStandard {
 
     /**
      * Finds a method in the target class
-     * @param searchFor
+     * @param searchFor The method node to search for
      * 
      * @return Target method matching searchFor, or null if not found
      */
@@ -1154,7 +844,7 @@ class MixinApplicatorStandard {
 
     /**
      * Finds a field in the target class
-     * @param searchFor
+     * @param searchFor The field node to search for
      * 
      * @return Target field matching searchFor, or null if not found
      */
