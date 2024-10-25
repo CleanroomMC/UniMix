@@ -141,9 +141,11 @@ final class MixinConfig implements Comparable<MixinConfig>, IMixinConfig {
     static class OverwriteOptions {
         
         /**
-         * Flag which specifies whether an overwrite with lower visibility than
+         * <p>lag which specifies whether an overwrite with lower visibility than
          * its target is allowed to be applied, the visibility will be upgraded
-         * if the target method is nonprivate but the merged method is private.
+         * if the target method is nonprivate but the merged method is private.</p>
+         *
+         * <strong>CLEANROOM CHANGE</strong>: true by default.
          */
         @SerializedName("conformVisibility")
         boolean conformAccessModifiers = true;
