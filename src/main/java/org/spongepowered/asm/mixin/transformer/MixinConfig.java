@@ -60,6 +60,7 @@ import org.spongepowered.asm.mixin.transformer.ext.Extensions;
 import org.spongepowered.asm.mixin.transformer.throwables.InvalidMixinException;
 import org.spongepowered.asm.service.IMixinService;
 import org.spongepowered.asm.service.MixinService;
+import org.spongepowered.asm.util.Lazy;
 import org.spongepowered.asm.util.VersionNumber;
 
 import com.google.common.base.Strings;
@@ -438,7 +439,7 @@ final class MixinConfig implements Comparable<MixinConfig>, IMixinConfig {
     /**
      * Service decorations on this config
      */
-    private transient Map<String, Object> decorations;
+    private transient Map<String, Lazy> decorations;
 
     /**
      * Spawn via GSON, no public ctor for you 
@@ -1234,8 +1235,10 @@ final class MixinConfig implements Comparable<MixinConfig>, IMixinConfig {
     }
     
     /**
-     * Decorate this config with arbitrary metadata for debugging or
-     * compatibility purposes
+     * <p>Decorate this config with arbitrary metadata for debugging or
+     * compatibility purposes</p>
+     *
+     * <strong>CLEANROOM CHANGE</strong>: supplier value passed through here will stay lazy until initialized
      * 
      * @param key meta key
      * @param value meta value
@@ -1245,12 +1248,12 @@ final class MixinConfig implements Comparable<MixinConfig>, IMixinConfig {
     @Override
     public <V> void decorate(String key, V value) {
         if (this.decorations == null) {
-            this.decorations = new HashMap<String, Object>();
+            this.decorations = new HashMap<String, Lazy>();
         }
         if (this.decorations.containsKey(key)) {
             throw new IllegalArgumentException(String.format("Decoration with key '%s' already exists on config %s", key, this));
         }
-        this.decorations.put(key, value);
+        this.decorations.put(key, Lazy.of(value));
     }
     
     /**
@@ -1272,9 +1275,12 @@ final class MixinConfig implements Comparable<MixinConfig>, IMixinConfig {
      * @return decoration value or null if absent
      */
     @Override
-    @SuppressWarnings("unchecked")
     public <V> V getDecoration(String key) {
-        return (V) (this.decorations == null ? null : this.decorations.get(key));
+        if (this.decorations == null) {
+            return null;
+        }
+        Lazy value = this.decorations.get(key);
+        return value == null ? null : value.get();
     }
 
     /**
