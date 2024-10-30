@@ -25,6 +25,7 @@
 package org.spongepowered.asm.mixin.injection.selectors;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 
@@ -737,7 +738,7 @@ public abstract class ElementNode<TNode> {
      * @return Wrapper for insn list
      */
     public static Iterable<ElementNode<AbstractInsnNode>> insnList(InsnList insns) {
-        return new ElementNodeIterable(insns, false);
+        return new ElementNodeIterable(Arrays.asList(insns.toArray()), false);
     }
     
     /**
@@ -748,7 +749,7 @@ public abstract class ElementNode<TNode> {
      * @return Wrapper for insn list
      */
     public static Iterable<ElementNode<AbstractInsnNode>> dynamicInsnList(InsnList insns) {
-        return new ElementNodeIterable(insns, true);
+        return new ElementNodeIterable(Arrays.asList(insns.toArray()), true);
     }
     
 }

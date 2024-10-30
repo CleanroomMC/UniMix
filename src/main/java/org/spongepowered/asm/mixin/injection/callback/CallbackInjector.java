@@ -24,11 +24,7 @@
  */
 package org.spongepowered.asm.mixin.injection.callback;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -219,7 +215,9 @@ public class CallbackInjector extends Injector {
             //If the handler doesn't captureArgs, the CallbackInfo(Returnable) will be the first LVT slot, otherwise it will be at the target's frameSize
             int callbackInfoSlot = handlerArgs.length == 1 ? Bytecode.isStatic(handler) ? 0 : 1 : frameSize;
             boolean seenCallbackInfoUse = false;
-            for (AbstractInsnNode insn : handler.instructions) {
+            ListIterator<AbstractInsnNode> iter = handler.instructions.iterator();
+            while (iter.hasNext()) {
+                AbstractInsnNode insn = iter.next();
                 //Look for anywhere the CallbackInfo(Returnable) is loaded in the handler, it's unused if it is never loaded in
                 if (insn.getType() == AbstractInsnNode.VAR_INSN && insn.getOpcode() == Opcodes.ALOAD && ((VarInsnNode) insn).var == callbackInfoSlot) {
                     seenCallbackInfoUse = true;
@@ -234,7 +232,9 @@ public class CallbackInjector extends Injector {
                 Injector.logger.debug("{} has {} override(s) in child classes", info, childHandlers.size());
 
                 out: for (MethodNode childHandle : childHandlers) {
-                    for (AbstractInsnNode insn : childHandle.instructions) {
+                    iter = childHandle.instructions.iterator();
+                    while (iter.hasNext()) {
+                        AbstractInsnNode insn = iter.next();
                         if (insn.getType() == AbstractInsnNode.VAR_INSN && insn.getOpcode() == Opcodes.ALOAD && ((VarInsnNode) insn).var == callbackInfoSlot) {
                             seenCallbackInfoUse = true;
                             break out; //If a child uses it then the parent will need to receive it
