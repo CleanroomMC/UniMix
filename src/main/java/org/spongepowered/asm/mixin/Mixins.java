@@ -113,8 +113,16 @@ public final class Mixins {
         Mixins.createConfiguration(configFile, fallback, null);
     }
 
+    public static Config createConfiguration(String configFile) {
+        return Mixins.createConfiguration(configFile, null);
+    }
+
+    public static Config createConfiguration(String configFile, IMixinConfigSource source) {
+        return Mixins.createConfiguration(configFile, MixinEnvironment.getDefaultEnvironment(), source);
+    }
+
     @SuppressWarnings("deprecation")
-    private static void createConfiguration(String configFile, MixinEnvironment fallback, IMixinConfigSource source) {
+    private static Config createConfiguration(String configFile, MixinEnvironment fallback, IMixinConfigSource source) {
         Config config = null;
         
         try {
@@ -124,6 +132,8 @@ public final class Mixins {
         }
         
         Mixins.registerConfiguration(config);
+
+        return config;
     }
 
     private static void registerConfiguration(Config config) {
